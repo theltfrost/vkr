@@ -2,9 +2,11 @@ package main
 
 import (
 	"bytes"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -15,6 +17,7 @@ import (
 )
 
 var db *sql.DB
+var lastErrorHash string
 
 func initDB() {
 	var err error
@@ -215,6 +218,41 @@ func diagnostics() {
 	haToken := getSetting("ha_token")
 	tgToken := getSetting("tg_token")
 
+	apiCheckURL := fmt.Sprintf("%s/api/", haURL)
+	reqAPI, _ := http.NewRequest("GET", apiCheckURL, nil)
+	reqAPI.Header.Set("Authorization", "Bearer "+haToken)
+	logURL := fmt.Sprintf("%s/api/error_log", haURL)
+	reqLog, _ := http.NewRequest("GET", logURL, nil)
+	respLog, err := http.DefaultClient.Do(reqLog)
+	reqLog.Header.Set("Authorization", "Bearer "+haToken)
+	reqLog.Header.Set("Authorization", "Bearer "+haToken)
+
+	respAPI, err := http.DefaultClient.Do(reqAPI)
+	if err != nil || respAPI.StatusCode != 200 {
+		notifyTelegram(tgToken, "API Home Assistant недоступна (ошибка соединения)")
+	} else {
+		defer respAPI.Body.Close()
+		var apiStatus struct {
+			Message string `json:"message"`
+		}
+		if err := json.NewDecoder(respAPI.Body).Decode(&apiStatus); err != nil || apiStatus.Message != "API running." {
+			notifyTelegram(tgToken, "API Home Assistant недоступна или отвечает некорректно")
+		}
+	}
+
+	if err == nil && respLog.StatusCode == 200 {
+		defer respLog.Body.Close()
+		body, _ := io.ReadAll(respLog.Body)
+
+		if bytes.Contains(body, []byte(" ERROR ")) {
+			hash := fmt.Sprintf("%x", sha256.Sum256(body))
+			if hash != lastErrorHash {
+				lastErrorHash = hash
+				notifyTelegram(tgToken, fmt.Sprintf("Ошибки в журнале Home Assistant:\n\n%s", string(body)))
+			}
+		}
+	}
+
 	// Получаем список датчиков с порогами
 	rows, err := db.Query("SELECT sensor_name, min_value, max_value FROM sensors")
 	if err != nil {
@@ -233,8 +271,9 @@ func diagnostics() {
 		req, _ := http.NewRequest("GET", url, nil)
 		req.Header.Set("Authorization", "Bearer "+haToken)
 		resp, err := http.DefaultClient.Do(req)
+
 		if err != nil || resp.StatusCode != 200 {
-			notifyTelegram(tgToken, fmt.Sprintf("\u26a0\ufe0f Датчик %s не отвечает", sensor))
+			notifyTelegram(tgToken, fmt.Sprintf("Датчик %s не отвечает", sensor))
 			continue
 		}
 
@@ -252,10 +291,22 @@ func diagnostics() {
 			continue
 		}
 
+		// Обработка батарейных датчиков
+		if dc, ok := state.Attributes["device_class"]; ok && dc == "battery" {
+			valFloat, err := strconv.ParseFloat(state.State, 64)
+			if err == nil {
+				if valFloat > 5 {
+					continue
+				}
+				notifyTelegram(tgToken, fmt.Sprintf("Батарея датчика %s разряжается (%.0f%%)", sensor, valFloat))
+				continue
+			}
+		}
+
 		// Проверка давности обновления
 		dur := time.Since(state.LastChanged)
 		if dur.Hours() >= 6 {
-			notifyTelegram(tgToken, fmt.Sprintf("\u26a0\ufe0f Датчик %s: значения не менялись %.1f часов", sensor, dur.Hours()))
+			notifyTelegram(tgToken, fmt.Sprintf("Датчик %s: значения не менялись %.1f часов", sensor, dur.Hours()))
 		}
 
 		// Проверка порогов, если заданы
@@ -265,7 +316,7 @@ func diagnostics() {
 				continue
 			}
 			if (minVal.Valid && value < minVal.Float64) || (maxVal.Valid && value > maxVal.Float64) {
-				notifyTelegram(tgToken, fmt.Sprintf("\u26a0\ufe0f Датчик %s: значение %.2f вне порогов", sensor, value))
+				notifyTelegram(tgToken, fmt.Sprintf("Датчик %s: значение %.2f вне порогов", sensor, value))
 			}
 		}
 	}
