@@ -1,0 +1,115 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8" />
+  <title>Диагностика Умного Дома</title>
+  <style>
+    body { font-family: sans-serif; padding: 20px; }
+    input, button { margin: 5px; padding: 5px; }
+    textarea { width: 100%; height: 100px; margin-top: 10px; }
+    .buttonstyle 
+        { 
+            border: none;
+              border-radius: 7px;
+              padding: 5px 15px; 
+              background: #b46c00;
+              cursor: pointer;
+              text-transform: uppercase;
+              font-weight: bold;
+              color: white;
+        }
+        .buttonstyle:hover {
+            background: #6b2c02;
+         }
+  </style>
+</head>
+<body>
+  <body bgcolor="#c0c0c0"></body>
+  <h1>Настройки</h1>
+  <label>Адрес Home Assistant: <input id="ha_url" type="text" /></label><br>
+  <label>Токен Home Assistant: <input id="ha_token" type="text" /></label><br>
+  <label>Токен Telegram: <input id="tg_token" type="text" /></label><br>
+  <label>Интервал диагностики (cron): <input id="cron_interval" type="text" /></label><br>
+  <button class="buttonstyle" onclick="updateSettings()">Сохранить настройки</button>
+
+  <h2>Датчики</h2>
+  <label>Добавить датчик: <input id="sensor_name" type="text" /></label><br>
+  <label>Минимальное значение: <input id="min_value" type="number" /></label><br>
+  <label>Максимальное значение: <input id="max_value" type="number" /></label><br>
+  <button class="buttonstyle" onclick="addSensor()">Добавить</button><br>
+  <label>Удалить датчик (ID): <input id="sensor_id_rm" type="number" /></label><br>
+  <button class="buttonstyle" onclick="deleteSensor()">Удалить</button><br>
+  <textarea id="sensor_list" readonly></textarea>
+  <button class="buttonstyle" onclick="listSensors()">Показать датчики</button>
+  <button class="buttonstyle" onclick="fetch_sensors()">Добавить все доступные датчики</button><br>
+  <label>Добавить пороговые значения для датчика с ID: <input id="sensor_id_update" type="number" /></label><br>
+  <label>Минимальное значение: <input id="min_value_update" type="number" /></label><br>
+  <label>Максимальное значение: <input id="max_value_update" type="number" /></label><br>
+  <button class="buttonstyle" onclick="updateThresholdHandler()">Добавить пороговые значения</button>
+
+  <h2>Тестирование</h2>
+  <button class="buttonstyle" onclick="runTest()">Запустить диагностику</button>
+
+  <script>
+    function updateSettings() {
+      fetch('/update', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          ha_url: document.getElementById('ha_url').value,
+          ha_token: document.getElementById('ha_token').value,
+          tg_token: document.getElementById('tg_token').value,
+          cron_interval: document.getElementById('cron_interval').value
+        })
+      }).then(res => res.text()).then(alert);
+    }
+
+function addSensor() {
+  const sensor_name = document.getElementById('sensor_name').value;
+  const min_value = document.getElementById('min_value').value;
+  const max_value = document.getElementById('max_value').value;
+
+  const url = `/add_sensor?sensor_name=${encodeURIComponent(sensor_id)}&min_value=${encodeURIComponent(min_value)}&max_value=${encodeURIComponent(max_value)}`;
+
+  fetch(url)
+    .then(res => res.text())
+    .then(alert);
+}
+
+
+    function deleteSensor() {
+      const sensor_id_rm = document.getElementById('sensor_id_rm').value;
+      fetch(`/delete_sensor?sensor_id=${encodeURIComponent(sensor_id_rm)}`)
+        .then(res => res.text()).then(alert);
+    }
+
+    function listSensors() {
+      fetch('/list_sensors')
+        .then(res => res.text())
+        .then(text => document.getElementById('sensor_list').value = text);
+    }
+
+    function runTest() {
+      fetch('/test')
+        .then(res => res.text()).then(alert);
+    }
+
+    function fetch_sensors() {
+      fetch('/fetch_sensors')
+        .then(res => res.text()).then(alert);
+    }
+
+    function updateThresholdHandler() {
+      const sensor_id_update = document.getElementById('sensor_id_update').value;
+      const min_value_update = document.getElementById('min_value_update').value;
+      const max_value_update = document.getElementById('max_value_update').value;
+      const url = `/update_threshold?sensor_id=${encodeURIComponent(sensor_id_update)}&min_value=${encodeURIComponent(min_value_update)}&max_value=${encodeURIComponent(max_value_update)}`;
+      fetch(url)
+        .then(res => res.text())
+        .then(alert);
+
+  }
+    
+  </script>
+</body>
+</html>
