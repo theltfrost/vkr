@@ -61,6 +61,7 @@ func updateHandler(w http.ResponseWriter, r *http.Request) {
 		HAToken  string `json:"ha_token"`
 		TGToken  string `json:"tg_token"`
 		CronTime string `json:"cron_interval"`
+		ChatID   string `json:"chat_id"`
 	}
 	var input Input
 	_ = json.NewDecoder(r.Body).Decode(&input)
@@ -72,6 +73,9 @@ func updateHandler(w http.ResponseWriter, r *http.Request) {
 	}
 	if input.TGToken != "" {
 		setSetting("tg_token", input.TGToken)
+	}
+	if input.ChatID != "" {
+		setSetting("chat_id", input.ChatID)
 	}
 	if input.CronTime != "" {
 		setSetting("cron_interval", input.CronTime)
@@ -201,48 +205,90 @@ func updateSensorThresholdsHandler(w http.ResponseWriter, r *http.Request) {
 
 // Запуск тестирования
 func testHandler(w http.ResponseWriter, r *http.Request) {
-	go diagnose()
+	go diagnostics()
 	w.Write([]byte("Тестирование запущено"))
 }
 
-func diagnose() {
+func diagnostics() {
+	// Получаем настройки
 	haURL := getSetting("ha_url")
 	haToken := getSetting("ha_token")
 	tgToken := getSetting("tg_token")
 
-	rows, _ := db.Query("SELECT name FROM sensors")
+	// Получаем список датчиков с порогами
+	rows, err := db.Query("SELECT sensor_name, min_value, max_value FROM sensors")
+	if err != nil {
+		log.Printf("Ошибка при запросе датчиков: %v", err)
+		return
+	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var sensor string
-		_ = rows.Scan(&sensor)
+		var minVal, maxVal sql.NullFloat64
+		_ = rows.Scan(&sensor, &minVal, &maxVal)
+
+		// Запрашиваем состояние датчика
 		url := fmt.Sprintf("%s/api/states/%s", haURL, sensor)
 		req, _ := http.NewRequest("GET", url, nil)
 		req.Header.Set("Authorization", "Bearer "+haToken)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil || resp.StatusCode != 200 {
-			notifyTelegram(tgToken, fmt.Sprintf("Датчик %s недоступен", sensor))
+			notifyTelegram(tgToken, fmt.Sprintf("\u26a0\ufe0f Датчик %s не отвечает", sensor))
 			continue
 		}
-		var data struct {
-			LastChanged time.Time `json:"last_changed"`
+
+		// Обрабатываем ответ
+		var state struct {
+			State       string         `json:"state"`
+			LastChanged time.Time      `json:"last_changed"`
+			Attributes  map[string]any `json:"attributes"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&data)
-		dur := time.Since(data.LastChanged)
-		if dur.Hours() < 1 {
-			notifyTelegram(tgToken, fmt.Sprintf("Датчик %s last seen %.1f hours ago", sensor, dur.Hours()))
+		_ = json.NewDecoder(resp.Body).Decode(&state)
+		resp.Body.Close()
+
+		// Проверка: измеряет ли датчик значения
+		if sc, ok := state.Attributes["state_class"]; !ok || sc != "measurement" {
+			continue
+		}
+
+		// Проверка давности обновления
+		dur := time.Since(state.LastChanged)
+		if dur.Hours() >= 6 {
+			notifyTelegram(tgToken, fmt.Sprintf("\u26a0\ufe0f Датчик %s: значения не менялись %.1f часов", sensor, dur.Hours()))
+		}
+
+		// Проверка порогов, если заданы
+		if minVal.Valid || maxVal.Valid {
+			value, err := strconv.ParseFloat(state.State, 64)
+			if err != nil {
+				continue
+			}
+			if (minVal.Valid && value < minVal.Float64) || (maxVal.Valid && value > maxVal.Float64) {
+				notifyTelegram(tgToken, fmt.Sprintf("\u26a0\ufe0f Датчик %s: значение %.2f вне порогов", sensor, value))
+			}
 		}
 	}
 }
 
 func notifyTelegram(token, message string) {
+	chatID := getSetting("chat_id")
+	if chatID == "" {
+		log.Println("Chat ID не задан")
+		return
+	}
+
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
 	payload := map[string]string{
-		"chat_id": "176418396",
+		"chat_id": chatID,
 		"text":    message,
 	}
 	body, _ := json.Marshal(payload)
-	http.Post(url, "application/json", bytes.NewReader(body))
+
+	_, err := http.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		log.Printf("Ошибка отправки сообщения в Telegram: %v", err)
+	}
 }
 
 func fetchSensorsHandler(w http.ResponseWriter, r *http.Request) {
@@ -263,7 +309,7 @@ func fetchAllSensors() {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Println("Ошибка получения состояния:", err)
+		log.Println("Ошибка получения иформации о датчике:", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -272,7 +318,7 @@ func fetchAllSensors() {
 		EntityID string `json:"entity_id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		log.Println("Error decoding JSON:", err)
+		log.Println("Ошибка декодирования JSON:", err)
 		return
 	}
 
@@ -280,14 +326,40 @@ func fetchAllSensors() {
 		if strings.HasPrefix(item.EntityID, "sensor.") {
 			_, err := db.Exec("INSERT OR IGNORE INTO sensors (sensor_name) VALUES (?)", item.EntityID)
 			if err != nil {
-				log.Println("Error inserting sensor:", err)
+				log.Println("Ошибка добавления датчика:", err)
 			}
 		}
 	}
 }
 
+func startDiagnosticsTicker() {
+	intervalStr := getSetting("cron_interval")
+	minutes, err := strconv.Atoi(intervalStr)
+	if err != nil || minutes <= 0 {
+		log.Printf("Некорректное значение интервала диагностики: %s", intervalStr)
+		return
+	}
+
+	duration := time.Duration(minutes) * time.Minute
+	log.Printf("Диагностика будет запускаться каждые %d минут", minutes)
+
+	go func() {
+		ticker := time.NewTicker(duration)
+		defer ticker.Stop()
+
+		for {
+			select {
+			case <-ticker.C:
+				log.Println("Запуск диагностики по расписанию")
+				diagnostics()
+			}
+		}
+	}()
+}
+
 func main() {
 	initDB()
+	startDiagnosticsTicker()
 	http.HandleFunc("/", Index)
 	http.HandleFunc("/update", updateHandler)
 	http.HandleFunc("/add_sensor", addSensorHandler)
@@ -296,6 +368,6 @@ func main() {
 	http.HandleFunc("/update_thresholds", updateSensorThresholdsHandler)
 	http.HandleFunc("/test", testHandler)
 	http.HandleFunc("/fetch_sensors", fetchSensorsHandler)
-	log.Println("Server started on :8080")
+	log.Println("Сервер запущен на порту :8080")
 	http.ListenAndServe(":8080", nil)
 }
