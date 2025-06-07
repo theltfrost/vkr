@@ -80,28 +80,28 @@ func updateHandler(w http.ResponseWriter, r *http.Request) {
 }
 
 func addSensorHandler(w http.ResponseWriter, r *http.Request) {
-	name := r.URL.Query().Get("sensor_name")
+	sensor_name := r.URL.Query().Get("sensor_name")
 	minStr := r.URL.Query().Get("min_value")
 	maxStr := r.URL.Query().Get("max_value")
 
-	if name == "" {
+	if sensor_name == "" {
 		http.Error(w, "Добавьте имя датчика", http.StatusBadRequest)
 		return
 	}
 
 	// Проверяем наличие датчика
 	var exists bool
-	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM sensors WHERE name = ?)", name).Scan(&exists)
+	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM sensors WHERE sensor_name = ?)", sensor_name).Scan(&exists)
 	if err != nil {
-		http.Error(w, "DB error", http.StatusInternalServerError)
+		http.Error(w, "Ошибка базы данных", http.StatusInternalServerError)
 		return
 	}
 	if exists {
-		http.Error(w, "Sensor already exists", http.StatusConflict)
+		http.Error(w, "Датчик уже добавлен", http.StatusConflict)
 		return
 	}
 
-	// Преобразуем пороги
+	// Добавляем пороговые значения
 	var minVal, maxVal sql.NullFloat64
 	if v, err := strconv.ParseFloat(minStr, 64); err == nil {
 		minVal = sql.NullFloat64{Float64: v, Valid: true}
@@ -110,40 +110,40 @@ func addSensorHandler(w http.ResponseWriter, r *http.Request) {
 		maxVal = sql.NullFloat64{Float64: v, Valid: true}
 	}
 
-	_, err = db.Exec("INSERT INTO sensors (name, min_value, max_value) VALUES (?, ?, ?)", name, minVal, maxVal)
+	_, err = db.Exec("INSERT INTO sensors (sensor_name, min_value, max_value) VALUES (?, ?, ?)", sensor_name, minVal, maxVal)
 	if err != nil {
-		http.Error(w, "Insert failed", http.StatusInternalServerError)
+		http.Error(w, "Ошибка добавления", http.StatusInternalServerError)
 		return
 	}
 
-	w.Write([]byte("Sensor added with thresholds"))
+	w.Write([]byte("Датчик успешно добавлен"))
 }
 
 func deleteSensorHandler(w http.ResponseWriter, r *http.Request) {
-	numStr := r.URL.Query().Get("num")
-	idx, err := strconv.Atoi(numStr)
+	sensor_id_str := r.URL.Query().Get("sensor_id_rm")
+	id_rm, err := strconv.Atoi(sensor_id_str)
 	if err != nil {
-		http.Error(w, "Invalid number", http.StatusBadRequest)
+		http.Error(w, "Некорректнй ID", http.StatusBadRequest)
 		return
 	}
-	_, _ = db.Exec("DELETE FROM sensors WHERE id = ?", idx)
-	w.Write([]byte("Sensor deleted"))
+	_, _ = db.Exec("DELETE FROM sensors WHERE id = ?", id_rm)
+	w.Write([]byte("Датчик успешно удален"))
 }
 
 func listSensorsHandler(w http.ResponseWriter, r *http.Request) {
-	rows, err := db.Query("SELECT id, name, min_value, max_value FROM sensors")
+	rows, err := db.Query("SELECT id, sensor_name, min_value, max_value FROM sensors")
 	if err != nil {
-		http.Error(w, "Database error", http.StatusInternalServerError)
+		http.Error(w, "Ошибка базы данных", http.StatusInternalServerError)
 		return
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		var id int
-		var name string
+		var sensor_name string
 		var min_value sql.NullFloat64
 		var max_value sql.NullFloat64
-		_ = rows.Scan(&id, &name, &min_value, &max_value)
+		_ = rows.Scan(&id, &sensor_name, &min_value, &max_value)
 
 		minStr := "not set"
 		maxStr := "not set"
@@ -154,55 +154,55 @@ func listSensorsHandler(w http.ResponseWriter, r *http.Request) {
 			maxStr = fmt.Sprintf("%.2f", max_value.Float64)
 		}
 
-		fmt.Fprintf(w, "%d: %s | min_value: %s | max_value: %s\n", id, name, minStr, maxStr)
+		fmt.Fprintf(w, "%d: %s | min_value: %s | max_value: %s\n", id, sensor_name, minStr, maxStr)
 	}
 }
 
-func updateThresholdHandler(w http.ResponseWriter, r *http.Request) {
-	if r.Method != http.MethodPost {
-		http.Error(w, "Invalid method", http.StatusMethodNotAllowed)
+func updateSensorThresholdsHandler(w http.ResponseWriter, r *http.Request) {
+	sensorID := r.URL.Query().Get("sensor_id")
+	minStr := r.URL.Query().Get("min_value")
+	maxStr := r.URL.Query().Get("max_value")
+
+	if sensorID == "" {
+		http.Error(w, "ID сенсора не указан", http.StatusBadRequest)
 		return
 	}
 
-	type ThresholdInput struct {
-		Name string   `json:"name"`      // имя датчика
-		Min  *float64 `json:"min_value"` // порог минимум, опционально
-		Max  *float64 `json:"max_value"` // порог максимум, опционально
+	// Проверка наличия датчика
+	var exists bool
+	err := db.QueryRow("SELECT EXISTS(SELECT 1 FROM sensors WHERE id = ?)", sensorID).Scan(&exists)
+	if err != nil {
+		http.Error(w, "Ошибка при проверке наличия датчика", http.StatusInternalServerError)
+		return
 	}
-
-	var input ThresholdInput
-	if err := json.NewDecoder(r.Body).Decode(&input); err != nil {
-		http.Error(w, "Invalid JSON", http.StatusBadRequest)
+	if !exists {
+		http.Error(w, "Датчик с таким ID не найден", http.StatusNotFound)
 		return
 	}
 
-	if input.Name == "" {
-		http.Error(w, "Missing sensor name", http.StatusBadRequest)
+	// Преобразование пороговых значений
+	var min_value, max_value sql.NullFloat64
+	if v, err := strconv.ParseFloat(minStr, 64); err == nil {
+		min_value = sql.NullFloat64{Float64: v, Valid: true}
+	}
+	if v, err := strconv.ParseFloat(maxStr, 64); err == nil {
+		max_value = sql.NullFloat64{Float64: v, Valid: true}
+	}
+
+	// Обновление порогов
+	_, err = db.Exec("UPDATE sensors SET min_value = ?, max_value = ? WHERE id = ?", min_value, max_value, sensorID)
+	if err != nil {
+		http.Error(w, "Ошибка при обновлении порогов", http.StatusInternalServerError)
 		return
 	}
 
-	if input.Min != nil {
-		_, err := db.Exec("UPDATE sensors SET min = ? WHERE name = ?", *input.Min, input.Name)
-		if err != nil {
-			http.Error(w, "DB error (min)", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	if input.Max != nil {
-		_, err := db.Exec("UPDATE sensors SET max_value = ? WHERE name = ?", *input.Max, input.Name)
-		if err != nil {
-			http.Error(w, "DB error (max_value)", http.StatusInternalServerError)
-			return
-		}
-	}
-
-	w.Write([]byte("Thresholds updated"))
+	w.Write([]byte("Пороговые значения успешно обновлены"))
 }
 
+// Запуск тестирования
 func testHandler(w http.ResponseWriter, r *http.Request) {
 	go diagnose()
-	w.Write([]byte("Test started"))
+	w.Write([]byte("Тестирование запущено"))
 }
 
 func diagnose() {
@@ -221,7 +221,7 @@ func diagnose() {
 		req.Header.Set("Authorization", "Bearer "+haToken)
 		resp, err := http.DefaultClient.Do(req)
 		if err != nil || resp.StatusCode != 200 {
-			notifyTelegram(tgToken, fmt.Sprintf("Sensor %s not available", sensor))
+			notifyTelegram(tgToken, fmt.Sprintf("Датчик %s недоступен", sensor))
 			continue
 		}
 		var data struct {
@@ -230,7 +230,7 @@ func diagnose() {
 		_ = json.NewDecoder(resp.Body).Decode(&data)
 		dur := time.Since(data.LastChanged)
 		if dur.Hours() < 1 {
-			notifyTelegram(tgToken, fmt.Sprintf("Sensor %s last seen %.1f hours ago", sensor, dur.Hours()))
+			notifyTelegram(tgToken, fmt.Sprintf("Датчик %s last seen %.1f hours ago", sensor, dur.Hours()))
 		}
 	}
 }
@@ -238,7 +238,7 @@ func diagnose() {
 func notifyTelegram(token, message string) {
 	url := fmt.Sprintf("https://api.telegram.org/bot%s/sendMessage", token)
 	payload := map[string]string{
-		"chat_id": "176418396", // заменить на ID пользователя или канала
+		"chat_id": "176418396",
 		"text":    message,
 	}
 	body, _ := json.Marshal(payload)
@@ -246,24 +246,24 @@ func notifyTelegram(token, message string) {
 }
 
 func fetchSensorsHandler(w http.ResponseWriter, r *http.Request) {
-	go fetchAndSaveAllSensors()
-	w.Write([]byte("Sensor fetch initiated"))
+	go fetchAllSensors()
+	w.Write([]byte("Запущено обновление датчиков, обновите список"))
 }
 
-func fetchAndSaveAllSensors() {
+func fetchAllSensors() {
 	haURL := getSetting("ha_url")
 	haToken := getSetting("ha_token")
 
 	req, err := http.NewRequest("GET", haURL+"/api/states", nil)
 	if err != nil {
-		log.Println("Error creating request:", err)
+		log.Println("Ошибка запроса:", err)
 		return
 	}
 	req.Header.Set("Authorization", "Bearer "+haToken)
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Println("Error fetching states:", err)
+		log.Println("Ошибка получения состояния:", err)
 		return
 	}
 	defer resp.Body.Close()
@@ -278,7 +278,7 @@ func fetchAndSaveAllSensors() {
 
 	for _, item := range result {
 		if strings.HasPrefix(item.EntityID, "sensor.") {
-			_, err := db.Exec("INSERT OR IGNORE INTO sensors (name) VALUES (?)", item.EntityID)
+			_, err := db.Exec("INSERT OR IGNORE INTO sensors (sensor_name) VALUES (?)", item.EntityID)
 			if err != nil {
 				log.Println("Error inserting sensor:", err)
 			}
@@ -293,7 +293,7 @@ func main() {
 	http.HandleFunc("/add_sensor", addSensorHandler)
 	http.HandleFunc("/delete_sensor", deleteSensorHandler)
 	http.HandleFunc("/list_sensors", listSensorsHandler)
-	http.HandleFunc("/update_threshold", updateThresholdHandler)
+	http.HandleFunc("/update_thresholds", updateSensorThresholdsHandler)
 	http.HandleFunc("/test", testHandler)
 	http.HandleFunc("/fetch_sensors", fetchSensorsHandler)
 	log.Println("Server started on :8080")

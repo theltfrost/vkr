@@ -29,6 +29,7 @@
   <label>Адрес Home Assistant: <input id="ha_url" type="text" /></label><br>
   <label>Токен Home Assistant: <input id="ha_token" type="text" /></label><br>
   <label>Токен Telegram: <input id="tg_token" type="text" /></label><br>
+  <label>Chat ID Telegram: <input id="chat_id" type="text" /></label><br>
   <label>Интервал диагностики (cron): <input id="cron_interval" type="text" /></label><br>
   <button class="buttonstyle" onclick="updateSettings()">Сохранить настройки</button>
 
@@ -69,7 +70,7 @@ function addSensor() {
   const min_value = document.getElementById('min_value').value;
   const max_value = document.getElementById('max_value').value;
 
-  const url = `/add_sensor?sensor_name=${encodeURIComponent(sensor_id)}&min_value=${encodeURIComponent(min_value)}&max_value=${encodeURIComponent(max_value)}`;
+  const url = `/add_sensor?sensor_name=${encodeURIComponent(sensor_name)}&min_value=${encodeURIComponent(min_value)}&max_value=${encodeURIComponent(max_value)}`;
 
   fetch(url)
     .then(res => res.text())
@@ -79,7 +80,7 @@ function addSensor() {
 
     function deleteSensor() {
       const sensor_id_rm = document.getElementById('sensor_id_rm').value;
-      fetch(`/delete_sensor?sensor_id=${encodeURIComponent(sensor_id_rm)}`)
+      fetch(`/delete_sensor?sensor_id_rm=${encodeURIComponent(sensor_id_rm)}`)
         .then(res => res.text()).then(alert);
     }
 
@@ -103,7 +104,7 @@ function addSensor() {
       const sensor_id_update = document.getElementById('sensor_id_update').value;
       const min_value_update = document.getElementById('min_value_update').value;
       const max_value_update = document.getElementById('max_value_update').value;
-      const url = `/update_threshold?sensor_id=${encodeURIComponent(sensor_id_update)}&min_value=${encodeURIComponent(min_value_update)}&max_value=${encodeURIComponent(max_value_update)}`;
+      const url = `/update_thresholds?sensor_id=${encodeURIComponent(sensor_id_update)}&min_value=${encodeURIComponent(min_value_update)}&max_value=${encodeURIComponent(max_value_update)}`;
       fetch(url)
         .then(res => res.text())
         .then(alert);
