@@ -30,7 +30,7 @@
   <label>Токен Home Assistant: <input id="ha_token" type="text" /></label><br>
   <label>Токен Telegram: <input id="tg_token" type="text" /></label><br>
   <label>Chat ID Telegram: <input id="chat_id" type="text" /></label><br>
-  <label>Интервал диагностики (cron): <input id="cron_interval" type="text" /></label><br>
+  <label>Интервал диагностики (в минутах): <input id="cron_interval" type="text" /></label><br>
   <button class="buttonstyle" onclick="updateSettings()">Сохранить настройки</button>
 
   <h2>Датчики</h2>
@@ -60,6 +60,7 @@
           ha_url: document.getElementById('ha_url').value,
           ha_token: document.getElementById('ha_token').value,
           tg_token: document.getElementById('tg_token').value,
+          chat_id: document.getElementById('chat_id').value, 
           cron_interval: document.getElementById('cron_interval').value
         })
       }).then(res => res.text()).then(alert);
