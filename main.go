@@ -344,6 +344,8 @@ func notifyTelegram(token, message string) {
 	if err != nil {
 		log.Printf("Ошибка отправки сообщения в Telegram: %v", err)
 	}
+
+	log.Printf("Уведомление отправлено в Telegram: %s", message)
 }
 
 func fetchSensorsHandler(w http.ResponseWriter, r *http.Request) {
