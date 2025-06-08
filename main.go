@@ -369,7 +369,7 @@ func fetchAllSensors() {
 	}
 	defer resp.Body.Close()
 
-	var result []struct 
+	var result []struct {
 		EntityID string `json:"entity_id"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
