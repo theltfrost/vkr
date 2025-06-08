@@ -37,6 +37,11 @@ func initDB() {
 	max_value REAL
 	);
 	`)
+	var exists int
+	err = db.QueryRow(`SELECT COUNT(*) FROM config WHERE key = 'cron_interval'`).Scan(&exists)
+	if err == nil && exists == 0 {
+		_, _ = db.Exec(`INSERT INTO config (key, value) VALUES ('cron_interval', '20')`)
+	}
 }
 
 func Index(w http.ResponseWriter, r *http.Request) {
@@ -225,7 +230,6 @@ func diagnostics() {
 	reqLog, _ := http.NewRequest("GET", logURL, nil)
 	respLog, err := http.DefaultClient.Do(reqLog)
 	reqLog.Header.Set("Authorization", "Bearer "+haToken)
-	reqLog.Header.Set("Authorization", "Bearer "+haToken)
 
 	respAPI, err := http.DefaultClient.Do(reqAPI)
 	if err != nil || respAPI.StatusCode != 200 {
@@ -253,7 +257,7 @@ func diagnostics() {
 		}
 	}
 
-	// Получаем список датчиков с порогами
+	// Получаем список датчиков с пороговыми значениями
 	rows, err := db.Query("SELECT sensor_name, min_value, max_value FROM sensors")
 	if err != nil {
 		log.Printf("Ошибка при запросе датчиков: %v", err)
@@ -360,7 +364,7 @@ func fetchAllSensors() {
 
 	resp, err := http.DefaultClient.Do(req)
 	if err != nil {
-		log.Println("Ошибка получения иформации о датчике:", err)
+		log.Println("Ошибка получения информации о датчиках:", err)
 		return
 	}
 	defer resp.Body.Close()
